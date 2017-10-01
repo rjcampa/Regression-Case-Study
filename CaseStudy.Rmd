@@ -1,0 +1,125 @@
+---
+title: "Case Study"
+author: "Yiqiang Zhao"
+date: "September 30, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+mortyHouse <- read.csv('C:/Users/Yiqiang/Desktop/Linear Regression Final/housing.csv')
+library(mice)
+library(glmnet)
+```
+
+```{r}
+# variables that have Missing data > 50%
+names(mortyHouse)[apply(sapply(mortyHouse, is.na), 2, sum)/dim(mortyHouse)[1] > 0.5]
+
+```
+```{r}
+# delete these variables
+mortyHouse['Alley'] = NULL
+mortyHouse['PoolQC'] = NULL
+mortyHouse['Fence'] = NULL
+mortyHouse['MiscFeature'] = NULL
+
+# remove ID
+mortyHouse['Id'] = NULL
+```
+
+```{r}
+# 
+summary(mortyHouse)
+```
+
+```{r splitdata}
+set.seed(1)
+train <- sample()
+```
+
+```{r}
+# remove missing data
+mortyHouseNonMiss <- na.omit(mortyHouse) 
+x <- model.matrix(SalePrice ~., data = mortyHouseNonMiss)
+y <- mortyHouseNonMiss$SalePrice
+
+# split data into training and test
+train <- sample(1:nrow(x), nrow(x) /2)
+test <- (-train)
+y.train <- y[train]
+y.test <- y[test]
+
+# fit the lasso regression model to the training data
+lasso.model.train <- glmnet(x[train, ], y.train, alpha = 1, lambda = grid.lambda)
+
+# perform cross validation on the training data to select the best lambda
+set.seed(1)
+cv.out <- cv.glmnet(x[train, ], y.train, alpha = 1)
+plot(cv.out)
+
+# find the best lambda
+best.lambda <- cv.out$lambda.min
+
+# fit the final model to the entire data set using the chose lambda
+final.model <- glmnet(x, y, alpha =1, lambda = best.lambda)
+coef.lasso <- coef(final.model)
+coef.lasso
+```
+
+```{r}
+# from the below output, seleting variables that we are going to use
+coef.lasso@Dimnames[[1]][coef.lasso@i+1]
+
+# select function
+variableSelection <- function(coefficientname, dataset = mortyHouseNonMiss){
+  dataclass <- sapply(dataset, class)
+  namelist <- c()
+  for(i in names(dataset)){
+    if (dataclass[i] == 'integer'){
+      if (i %in% coefficientname){
+          namelist <- c(namelist, i)
+      }
+    }else if(dataclass[i] == 'factor'){
+      if(any(paste0(i, levels(dataset[[i]])) %in% coefficientname)){
+        namelist <- c(namelist, i)
+      }
+     
+    }
+  }
+  namelist
+}
+
+# drop all unnecessary variables
+variableName <- variableSelection(coef.lasso@Dimnames[[1]][coef.lasso@i+1])
+MortySelected <- mortyHouse[c(variableName, 'SalePrice')]
+
+# split to training and test data set
+set.seed(1)
+train <- sample(1:nrow(MortySelected), nrow(MortySelected)/2)
+test <- (-train)
+
+x.train <- MortySelected[train, -44]
+y.train <- MortySelected[train, 'SalePrice']
+
+testdata <-  data.matrix(na.omit(MortySelected[test,]))
+x.test <- testdata[,-44]
+y.test <- testdata[,44]
+
+
+# imputation 
+imp <- mice(x.train, m = 1)
+x.train <-  data.matrix(complete(imp,1) )
+
+ridge.model.train <- glmnet(x.train, y.train, alpha = 0, lambda = grid.lambda)
+cv.out <- cv.glmnet(x.train, y.train, alpha = 0)
+plot(cv.out)
+best.lambda <- cv.out$lambda.min
+ridge.pred <- predict(ridge.model.train, s= best.lambda, new = x.test)
+mspe.ridge <-  mean((ridge.pred- y.test)^2)
+```
+
+```{r}
+plot(ridge.pred - y.test, y.test)
+```
+
